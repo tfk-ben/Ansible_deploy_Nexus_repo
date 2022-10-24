@@ -1,0 +1,151 @@
+---
+- name: Install java and net-tools
+  hosts: webserver
+  become: True
+  tasks:
+    - name: Update apt repo and cache
+      ansible.builtin.apt: update_cache=yes force_apt_get=yes cache_valid_time=3600
+    - name: Install Java 8
+      ansible.builtin.apt: name=openjdk-8-jre-headless      
+    - name: Install net-tools
+      ansible.builtin.apt: name=net-tools 
+    - name: Install acl module
+      ansible.builtin.apt: name=acl
+
+
+
+- name: Download and unpack Nexus installer
+  hosts: webserver
+  become: True
+  tasks:
+
+
+    - name: Check nexus folder stats  # !!!!!!!!!!!!!! see ligne 48
+      ansible.builtin.stat:
+        path: /opt/nexus
+      register: stat_result  
+
+
+
+    - name: Download Nexus
+      ansible.builtin.get_url: 
+        url: https://download.sonatype.com/nexus/3/latest-unix.tar.gz
+        dest: /opt/
+      register: download_result #we use it to save the name of the file to use it for the installations
+    #- debug: {{download_result}} we can see that dest attribut got the path/name of file 
+
+    - name: Untar nexus installer
+      ansible.builtin.unarchive:
+        src: "{{download_result.dest}}"
+        dest: /opt/ 
+        remote_src: yes
+      when: not stat_result.stat.exists
+
+
+    - name: Find nexus folder #we use to find the file we give just the name 
+      ansible.builtin.find: 
+        paths: /opt
+        pattern: "nexus-*"
+        file_type: directory
+      register: find_result
+
+#here we are using shell so the problem when we run the playbook again hell run this command again and it will cause error
+#so we need to : 1- check if file exisit 2 - set condition for changing name task 
+# so we add checking task on the top so we can use it on all tasks 
+
+    - name: Rename nexus folder
+      ansible.builtin.shell: mv {{find_result.files[0].path}} /opt/nexus
+      when: not stat_result.stat.exists  #so the task will be executed when not exisit
+
+#no we need to create a user for the nexus
+#first we create the group then the user
+
+
+
+- name: Create nexus user to own nexus folders
+  hosts: webserver
+  become: True
+  tasks:
+
+    - name: Create nexus group
+      ansible.builtin.group:   
+        name: nexus
+        state: present
+
+
+    - name: Create nexus user
+      ansible.builtin.user: 
+        name: nexus
+        group: nexus
+
+
+
+    - name: Make nexus user owner of nexus folder
+      ansible.builtin.file: 
+        path: /opt/nexus
+        state: directory
+        owner: nexus
+        group: nexus
+        recurse: yes   #Recursive means chown will be done for all documents in the specified directory,
+        #and also files and folders inside all sub-directories.  
+
+
+
+    - name: Make nexus user owner of sonatype-work folder
+      ansible.builtin.file:
+        path: /opt/sonatype-work
+        state: directory
+        owner: nexus
+        group: nexus
+        recurse: yes
+
+
+
+#now in /opt/nexus/bin/nexus.rc we need to change #run_as_user="" (add user created)
+#we can use blockinfile to add lines in a file 
+   #   blockinfile:
+   #     path: /opt/nexus/bin/nexus.rc
+   #     block: | #this reprisenting multi line string 
+   #       run_as_user="nexus"
+
+#or we can use lineinfile : it will a line we chose with a line we create 
+# regexp: '^ourline'
+
+- name: Start nexus with nexus user
+  hosts: webserver
+  become: True
+  become_user: nexus     
+  tasks:
+
+
+    - name: Set run_as_user nexus
+      ansible.builtin.lineinfile: 
+        path: /opt/nexus/bin/nexus.rc
+        regexp: '^#run_as_user=""'
+        line: run_as_user="nexus"
+
+
+    - name: Start nexus
+      ansible.builtin.command: /opt/nexus/bin/nexus start
+
+
+
+- name: Verify nexus running
+  hosts: webserver
+  tasks:
+
+    - name: Check with ps
+      ansible.builtin.shell: ps aux | grep nexus
+      register: app_status
+    - ansible.builtin.debug: msg={{app_status.stdout_lines}}
+
+
+    - name: Wait one minute
+      ansible.builtin.pause:
+        minutes: 1
+
+
+    - name: Check with netstat
+      ansible.builtin.shell: netstat -plnt
+      register: app_status
+    - ansible.builtin.debug: msg={{app_status.stdout_lines}}
