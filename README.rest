@@ -1,0 +1,14 @@
+
+===============================
+Deploy Nexus repo with Ansible
+===============================
+
+firt you should create hosts file and put : 
+server_ip ansible_ssh_private_key_file=path_of_key ansible_user=server_user
+and run configuration with :
+
+- install requirements :
+
+.. code-block:: sh
+
+    $ ansible-playbook -i hosts Nexus.yaml
